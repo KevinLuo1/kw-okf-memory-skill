@@ -30,6 +30,70 @@ KW-OKF Memory turns loose chat context into an auditable local knowledge base th
 | Screenshots and sources lose context | Assets and raw sources are stored in predictable folders and can be linked from formal knowledge pages. |
 | Humans need to review what AI wrote | Obsidian is recommended as the review and navigation surface after commit, while Markdown and the glue script remain the source of truth. |
 
+## Common Use Cases
+
+You do not need to think in scripts or schemas during normal use. Talk to Codex in plain language and let the Skill handle the memory workflow.
+
+### 1. Save project decisions
+
+When a discussion ends with a decision, ask Codex to preserve it:
+
+```text
+Save this decision to my long-term memory and link it to the related project notes.
+```
+
+Useful for architecture choices, product direction, research conclusions, naming rules, workflow decisions, and tradeoffs you do not want to re-explain later.
+
+### 2. Keep project rules consistent
+
+When you correct Codex or establish a rule, turn it into durable memory:
+
+```text
+Remember this rule for future work: do not write business knowledge into the Skill folder; only write it into the Vault.
+```
+
+Useful for coding conventions, personal preferences, review standards, file organization rules, and repeatable operating principles.
+
+### 3. Build a research memory base
+
+When collecting sources, screenshots, links, or notes, ask Codex to organize them instead of leaving them in chat:
+
+```text
+Turn these research notes and links into a source note, then connect it to the relevant wiki pages.
+```
+
+Useful for product research, market research, paper reading, tool comparisons, legal or policy notes, and any workflow where sources matter.
+
+### 4. Give screenshots and assets context
+
+When an image, screenshot, PDF, or reference file matters, keep it connected to the knowledge it supports:
+
+```text
+Archive this screenshot as a memory asset and create a short note explaining what it proves.
+```
+
+Useful when visual evidence would otherwise sit in a random folder with no searchable explanation.
+
+### 5. Ask Codex to answer with memory
+
+Before making a recommendation, Codex can search or think with prior notes:
+
+```text
+Before answering, search my memory for related decisions and stale rules.
+```
+
+Useful when the answer depends on previous constraints, user preferences, past mistakes, or project-specific context.
+
+### 6. Clean up the knowledge base
+
+When the vault starts growing, ask Codex to inspect it:
+
+```text
+Audit my memory vault for duplicate notes, broken links, stale pages, and missing associations.
+```
+
+Useful for preventing the wiki from becoming another messy folder.
+
 ## What It Helps Codex Do
 
 Use this Skill to ask Codex to:
