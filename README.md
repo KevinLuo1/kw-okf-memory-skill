@@ -2,7 +2,7 @@
 
 Give Codex a structured Obsidian/Markdown memory wiki: Karpathy-style + OKF-inspired pages, safe structure evolution, index-and-graph retrieval, and staged AI writes.
 
-KW-OKF Memory is for people who use Codex across many chats and do not want their project knowledge scattered across old conversations. It helps Codex save decisions, rules, research notes, screenshots, procedures, and lessons into a structured local vault that humans can review and Codex can reuse.
+KW-OKF Memory is for people who use Codex across many chats and do not want their project knowledge scattered across old conversations. It is especially useful for long-running projects and long-lived knowledge bases where decisions, rules, research notes, screenshots, procedures, and lessons need to survive, stay organized, and remain reusable.
 
 Recommended setup: **Codex + KW-OKF Memory + Obsidian + a local Markdown vault**. Obsidian is recommended for reading, browsing, backlinks, and review; the source of truth remains plain Markdown plus the audited glue workflow.
 
