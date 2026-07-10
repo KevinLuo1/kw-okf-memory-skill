@@ -3,11 +3,27 @@
 [![CI](https://github.com/KevinLuo1/kw-okf-memory-skill/actions/workflows/ci.yml/badge.svg)](https://github.com/KevinLuo1/kw-okf-memory-skill/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Give Codex a structured Obsidian/Markdown memory wiki: Karpathy-style + an opinionated OKF-inspired KW-OKF profile, safe structure evolution, index-and-graph retrieval, staged AI writes, and optional OKF v0.1 export.
+**Long-term memory for Codex that stays organized, connected, and under your control.**
 
-KW-OKF Memory is for people who use Codex across many chats and do not want their project knowledge scattered across old conversations. It is especially useful for long-running projects and long-lived knowledge bases where decisions, rules, research notes, screenshots, procedures, and lessons need to survive, stay organized, and remain reusable.
+Preserve decisions, rules, research, screenshots, procedures, and lessons across chats in a local-first Obsidian/Markdown knowledge base. Karpathy-style routing and OKF-inspired pages keep knowledge structured; `categories.json` and `graph.json` support targeted, association-aware retrieval; staged writes let you approve durable changes before they enter the formal wiki.
 
-Recommended setup: **Codex + KW-OKF Memory + Obsidian + a local Markdown vault**. Obsidian is recommended for reading, browsing, backlinks, and review; the source of truth remains plain Markdown plus the audited glue workflow.
+Recommended setup: **Codex + KW-OKF Memory + Obsidian + a local Markdown vault**. Obsidian is recommended, not required. Plain Markdown and linked assets remain the source of truth.
+
+## Install In Codex
+
+Requirements:
+
+- Python 3.10 or newer.
+- Pillow for `process-img`: `python -m pip install Pillow`.
+- Obsidian is recommended but optional.
+
+Ask Codex to install the Skill from this repository:
+
+```text
+Use skill-installer to install https://github.com/KevinLuo1/kw-okf-memory-skill/tree/main/skills/kw-okf-memory
+```
+
+Restart Codex after installation so the Skill is discovered.
 
 ## Why Install It?
 
@@ -183,22 +199,6 @@ Audit + recommended Obsidian review
 ```
 
 The key rule is simple: Codex can help write memory, but formal knowledge does not enter `wiki/` silently.
-
-## Install In Codex
-
-Requirements:
-
-- Python 3.10 or newer.
-- Pillow for `process-img`: `python -m pip install Pillow`.
-- Obsidian is recommended but optional.
-
-Ask Codex to install the Skill from this repository:
-
-```text
-Use skill-installer to install https://github.com/KevinLuo1/kw-okf-memory-skill/tree/main/skills/kw-okf-memory
-```
-
-Restart Codex after installation so the Skill is discovered.
 
 ## Configure
 
