@@ -1,54 +1,68 @@
 # KW-OKF Memory Skill
 
-Turn Codex conversations into a Karpathy-style personal wiki with a Google OKF-inspired local memory vault.
+A Codex Skill for keeping AI-written knowledge bases organized across chats.
 
-KW-OKF Memory is a Codex Skill for people who want Codex to remember project decisions, operating rules, research notes, assets, and hard-won lessons across chats without dumping everything into a messy folder. It combines a Karpathy-style personal wiki mindset with a Google OKF-inspired Markdown schema: small linkable knowledge pages, typed frontmatter, parent routing, source references, audit logs, rebuildable indexes, and optional Obsidian review.
+KW-OKF Memory helps Codex preserve useful project context without turning your knowledge base into a mess. It solves three common problems: Codex forgets context across chats, AI can write notes too freely, and local knowledge bases become chaotic as decisions, rules, screenshots, sources, and procedures pile up.
 
-Instead of treating memory as hidden model state, this Skill keeps memory transparent and inspectable. Codex can search it, think with it, stage changes to it, and maintain it over time.
+The Skill gives Codex a controlled workflow for saving durable knowledge into an Obsidian-friendly local Markdown vault. New memory is staged first, previewed for human confirmation, then committed into a Karpathy-style personal wiki with a Google OKF-inspired page schema. Codex can later search it, think with it, update it, and audit it.
 
-## The Problem It Solves
+Obsidian is recommended for human review and navigation, but it is not required. The core system is plain Markdown plus the bundled glue script.
 
-Codex can help in the moment, but long-running work has a memory problem:
+## The Pain Points
 
-- Important decisions get buried in old chats.
-- Project rules are repeated, forgotten, or contradicted.
-- Useful screenshots and source notes are hard to connect to later work.
-- Knowledge bases become messy when AI writes directly into them without review.
-- Search alone is not enough when you need Codex to compare, synthesize, or detect conflicts.
+Use this Skill when your Codex work has any of these problems:
 
-KW-OKF Memory gives Codex a workflow for turning those scattered fragments into an organized local wiki that can still be read, edited, and audited by humans.
+- **Codex loses context across chats**: decisions, preferences, and lessons stay buried in old conversations.
+- **AI writes too freely**: generated notes can duplicate, conflict, drift, or land in the wrong folder.
+- **The knowledge base gets messy**: screenshots, sources, rules, cases, and procedures accumulate without a stable structure.
+- **Search is not enough**: sometimes Codex needs linked context, stale-note checks, conflict checks, or synthesis before answering.
 
-## What It Does
+KW-OKF Memory turns loose chat context into an auditable local knowledge base that both humans and Codex can inspect.
 
-Use this Skill when you want Codex to:
+## How It Solves Them
 
-- Save a conversation lesson, decision, rule, SOP, case, entity note, or source note.
+| Pain point | How KW-OKF Memory addresses it |
+| --- | --- |
+| Codex loses context across chats | Durable knowledge is committed into `wiki/` as Markdown pages, then reused through `search` and deeper `think` workflows. |
+| AI writes too freely | Formal writes must go through `stage -> preview -> confirmation -> commit`, so Codex cannot silently write final knowledge into the vault. |
+| The knowledge base gets messy | The vault has a fixed skeleton, OKF-style frontmatter, Router/Leaf page types, source references, tags, assets, and rebuildable indexes. |
+| Duplicate or conflicting notes pile up | Write-time checks and maintenance workflows look for related notes, duplicate pages, conflicts, stale records, broken links, and orphan pages. |
+| Screenshots and sources lose context | Assets and raw sources are stored in predictable folders and can be linked from formal knowledge pages. |
+| Humans need to review what AI wrote | Obsidian is recommended as the review and navigation surface after commit, while Markdown and the glue script remain the source of truth. |
+
+## What It Helps Codex Do
+
+Use this Skill to ask Codex to:
+
+- Save a conversation lesson, decision, rule, SOP, case, entity note, source note, screenshot, or asset.
 - Create or update a structured OKF-style Markdown page inside a personal wiki.
-- Stage a draft first, show a preview, and only commit after confirmation.
-- Build `categories.json` for fast lookup and `graph.json` for parent/link relationships.
+- Stage AI-written memory first, preview it, and commit only after confirmation.
 - Search existing memory before answering or writing new notes.
-- Use a deeper think flow when a question needs related context, conflicts, stale-note checks, or synthesis.
-- Process screenshots and other assets into a predictable local vault structure.
-- Audit the vault for duplicate notes, broken links, orphan pages, stale records, and missing metadata.
-- Open committed notes in Obsidian for human review without making Obsidian the write authority.
+- Think with related memory when a question needs context, conflicts, stale-note checks, or synthesis.
+- Process screenshots and other assets into predictable local folders.
+- Build `categories.json` for fast lookup and `graph.json` for parent/link relationships.
+- Audit the vault for duplicates, broken links, orphan pages, stale records, and missing metadata.
+- Open committed notes in Obsidian for human review, browsing, and backlink inspection.
 
-## Why It Is Different
+## Recommended Setup
 
-KW-OKF Memory is intentionally boring in the best way:
+Recommended:
 
-- **Karpathy-style wiki**: durable knowledge becomes small, readable, linkable pages.
-- **Google OKF-inspired schema**: pages use typed frontmatter, parent routing, timestamps, sources, links, and evolution logs.
-- **Local-first**: your memory lives in your filesystem.
-- **Human-readable**: Markdown pages and assets are the source of truth.
-- **Audited**: formal writes go through staging, preview, confirmation, commit, build, and audit.
-- **Agent-friendly**: structured frontmatter and indexes make it easier for Codex to locate the right memory quickly.
-- **Not a black box**: generated JSON can be rebuilt from Markdown at any time.
-- **Obsidian-compatible**: review and navigate the vault with normal Markdown tooling.
-- **Bilingual-ready**: defaults to `en-US`, with `zh-CN` supported for Chinese workflows.
+```text
+Codex + KW-OKF Memory Skill + local Markdown Vault + Obsidian
+```
 
-This is an independent project inspired by the wiki and OKF ideas above. It is not an official Google product or an official OKF compliance claim.
+Obsidian gives you a comfortable human interface for reading, browsing links, searching, and reviewing committed notes. The Skill still treats Obsidian as a review surface, not the write authority.
 
-## Core Workflow
+Works without Obsidian:
+
+```text
+Codex + KW-OKF Memory Skill + local Markdown Vault
+```
+
+You can initialize, search, stage, commit, build, and audit the vault without installing Obsidian.
+
+## How It Works
 
 ```text
 User / Codex conversation
@@ -69,10 +83,24 @@ Commit to wiki/
 Rebuild categories.json + graph.json
         |
         v
-Audit + optional Obsidian review
+Audit + recommended Obsidian review
 ```
 
 The key rule is simple: Codex can help write memory, but formal knowledge does not enter `wiki/` silently.
+
+## Why It Is Different
+
+- **Prevents messy AI-written knowledge bases**: Codex stages and previews before formal writes.
+- **Preserves Codex memory across chats**: durable project knowledge survives beyond one conversation.
+- **Karpathy-style wiki**: durable knowledge becomes small, readable, linkable pages.
+- **Google OKF-inspired schema**: pages use typed frontmatter, parent routing, timestamps, sources, links, and evolution logs.
+- **Obsidian-friendly**: recommended for review, navigation, search, and backlink inspection.
+- **Markdown-first**: pages and assets are the source of truth, not generated JSON.
+- **Audited**: formal writes go through staging, preview, confirmation, commit, build, and audit.
+- **Agent-friendly**: structured frontmatter and indexes make it easier for Codex to locate the right memory quickly.
+- **Bilingual-ready**: defaults to `en-US`, with `zh-CN` supported for Chinese workflows.
+
+This is an independent project inspired by the wiki and OKF ideas above. It is not an official Google product or an official OKF compliance claim.
 
 ## Install In Codex
 
@@ -99,7 +127,9 @@ The public release uses safe defaults:
 }
 ```
 
-Edit `skills/kw-okf-memory/config.json` after installation, or pass `--vault <path>` to the glue script commands.
+For the recommended Obsidian setup, open the generated `~/KnowledgeBase` folder as an Obsidian vault. If you want automatic post-commit opening, configure `obsidian_vault_name`, `obsidian_cli_path`, and `obsidian_auto_open_after_commit` in `skills/kw-okf-memory/config.json` after installation.
+
+You can also pass `--vault <path>` to the glue script commands.
 
 ## Quick Start
 
@@ -129,6 +159,7 @@ Save this decision to long-term memory.
 Search my memory for previous rules about this project.
 Think with my memory before answering this design question.
 Audit my memory vault for duplicates and stale notes.
+Open this committed note in Obsidian for review.
 ```
 
 ## What The Vault Contains
@@ -164,6 +195,7 @@ Do not store personal vault content inside this repository. The Skill defines pr
 
 KW-OKF Memory is conservative by design:
 
+- It recommends Obsidian for review, but does not require it.
 - It does not treat Obsidian as the write authority.
 - It does not make generated JSON the source of truth.
 - It does not silently create new top-level framework folders.
@@ -172,4 +204,4 @@ KW-OKF Memory is conservative by design:
 
 ## Status
 
-This is an early public release for Codex users who want transparent, Markdown-based long-term memory. Feedback, issues, and improvements are welcome.
+This is an early public release for Codex users who want transparent, Obsidian-friendly, Markdown-based long-term memory. Feedback, issues, and improvements are welcome.
