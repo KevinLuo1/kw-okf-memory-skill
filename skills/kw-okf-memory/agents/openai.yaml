@@ -1,0 +1,7 @@
+interface:
+  display_name: "KW-OKF Memory"
+  short_description: "Audited local OKF memory vault workflow"
+  default_prompt: "Use $kw-okf-memory to save this as an audited local memory note."
+
+policy:
+  allow_implicit_invocation: true
