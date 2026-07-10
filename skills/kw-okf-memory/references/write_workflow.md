@@ -2,6 +2,17 @@
 
 Formal writing is the only path for turning candidate knowledge into committed Vault knowledge. It prioritizes search first, preview first, then user confirmation to prevent duplicate pages, wrong directories, and silent writes.
 
+## Contents
+
+- [When To Use](#when-to-use)
+- [Pre-Write Triage](#pre-write-triage)
+- [Stage Draft](#stage-draft)
+- [Preview Requirements](#preview-requirements)
+- [Batch Confirmation](#batch-confirmation)
+- [Commit Rules](#commit-rules)
+- [Updating Existing Knowledge](#updating-existing-knowledge)
+- [Stop Conditions](#stop-conditions)
+
 ## When To Use
 
 Enter this workflow for explicit preservation or write intent: the user wants Codex to save knowledge, preserve a lesson, distill a rule/SOP/case/decision, create or update an OKF page, update long-term memory, or archive an image/product lesson as knowledge.
@@ -11,7 +22,7 @@ Do not treat ordinary lookup, judgment, or synthesis as permission to write. Loo
 ## Pre-Write Triage
 
 1. Read `config.json` to locate the Vault, default language, supported languages, Obsidian settings, and directory confirmation rules.
-2. Decide body language: explicit user choice wins; otherwise follow the current conversation language; if unclear, use the configured fallback language. This public release defaults to `en-US` and also supports `zh-CN`.
+2. Decide body language: explicit user choice wins; otherwise follow the current conversation language; if unclear, use the configured fallback language.
 3. Decide the target kind: new Router, normal `LEAF_RULE`, existing-page update, or image-asset-only processing; also decide whether missing Routers or business directories need to be created.
 4. Read `okf_schema.md` to confirm fields and body structure.
 5. Read `vault_framework.md` to confirm the target path is allowed.
@@ -37,7 +48,8 @@ Write rules:
 - Pass `--language en-US|zh-CN` when the user chooses a supported language.
 - Put evidence in `--source-ref`, assets in `--image`, and high-confidence links in `--link`.
 - Planned business directories must appear in `planned_directory_creates`.
-- Planned missing Routers must appear in `planned_router_creates` and inherit the current draft language.
+- Every missing Router in the ancestor chain must appear in `planned_router_creates`, ordered from the highest missing Router to the immediate parent, and inherit the current draft language.
+- The staged draft includes `_kw_target_path`; do not edit or remove it. `commit` uses it to prevent writing the approved draft to another path.
 
 ## Preview Requirements
 
@@ -49,6 +61,7 @@ Before asking for confirmation, show the user:
 - sources, images, and default-write links
 - suggested links, possible duplicates, do-not-link candidates, and the reason for each candidate
 - planned directory or Router creation
+- planned asset path, image operation, output dimensions, missing asset directories, and overwrite state from `process-img --preview`
 - low confidence, weak evidence, dangling links, possible conflicts, or other risks
 
 User confirmation of the full preview counts as confirmation for links, directories, and Routers marked as default-write. The user may change the title, path, links, or cancel before commit.
@@ -75,6 +88,10 @@ Use extra flags only after the corresponding risk was previewed and confirmed:
 - `--allow-create-router`: create the missing Router listed in the preview.
 - `--overwrite`: replace an existing target page; this requires explicit user confirmation.
 
+`commit` verifies that the draft target and path-derived `id` match, recursively creates only the previewed Router chain, preserves the original `created_at` during overwrite, rebuilds indexes, runs changed-page audit checks, and rolls back its filesystem changes when a later commit step fails. Codex must still run or inspect the full post-commit `audit` result.
+
+If the write includes an image, first run `process-img --preview` and include that plan in the combined note preview. After user confirmation, run `process-img` with `--allow-create-dirs`, `--overwrite`, or `--force-ratio` only when those exact risks/actions were previewed, then run `commit`. If image processing fails, do not commit the note.
+
 After `commit`, refresh or inspect `build` / `audit` results. If the preview confirmed new or changed tag-registry entries, maintain root `tags.md` as an explicit human/AI step; there is currently no dedicated script for this, so do not silently rewrite it. If Obsidian integration is configured, treat it as a human review surface only.
 
 ## Updating Existing Knowledge
@@ -93,6 +110,7 @@ Stop and explain when:
 - the target path is not valid `wiki/**/*.md`
 - the write requires a new top-level directory or new `wiki/` first-level category
 - the parent node is missing and the user has not confirmed Router creation
+- an asset target exists or needs new subdirectories and the matching image plan was not previewed and confirmed
 - a likely duplicate appears and merge-vs-new is unclear
 - evidence is too weak to support the page conclusion
 - the user asks to skip preview or silently write a formal page

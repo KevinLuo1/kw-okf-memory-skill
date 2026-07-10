@@ -14,7 +14,7 @@ Example signals, not exact trigger phrases:
 - "which md contains this knowledge"
 - "search xxx"
 
-`search` should return candidate pages, paths, summaries, match reasons, and suggested next steps. Do not rush into conclusions.
+`search` matches path, `id`, parent path, title, summary, aliases, tags, scope, structural type, and business type. It returns `matched_fields` so Codex can explain why each candidate appeared. Do not rush into conclusions.
 
 Use `think` when the user wants judgment, summary, comparison, decision support, planning, conflict checks, lesson extraction, or asks to combine prior memory.
 
@@ -27,7 +27,7 @@ Example signals, not exact trigger phrases:
 - "what can we borrow from this"
 - "decide where this note belongs and what it should link to"
 
-`think` must run `search` first, then read the top 1-5 relevant note bodies. Do not scan the whole vault body text unless the user explicitly asks for a broad audit.
+`think` must run `search` first, use `graph.json` to inspect only relevant neighbors, then read the top 1-5 relevant note bodies. `graph.json` includes the root node, parent edges, resolved links, and dangling synapses. Do not scan the whole vault body text unless the user explicitly asks for a broad audit.
 
 If the user explicitly says "only search" or "do not analyze", use only `search`. If the user explicitly asks to analyze with memory or make a judgment, use `think`. If unclear, search first and ask in one sentence whether synthesis is needed; when the task clearly needs advice, proceed with `think`.
 

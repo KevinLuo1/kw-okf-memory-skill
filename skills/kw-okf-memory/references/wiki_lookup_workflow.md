@@ -4,9 +4,9 @@ Use the Vault as a human-readable wiki with machine-readable indexes. Prefer pre
 
 ## Lookup Flow
 
-1. Search `categories.json` by title, aliases, tags, summary, `type`, `knowledge_type`, and scope.
+1. Use `search` to query `categories.json` by path, `id`, parent path, title, aliases, tags, summary, `type`, `knowledge_type`, and scope; use `matched_fields` as the initial match explanation.
 2. Read only the 1-3 most relevant candidate notes when needed; if more candidates must be read to answer the current question or avoid missing key context, explain why and ask the user for permission first.
-3. For ordinary precise lookup, use `categories.json` first to locate candidates; you may lightly check `graph.json` to see whether direct neighboring relationships exist, but only follow `graph.json`, candidate frontmatter `links`, and standard Markdown body links into note bodies when the question needs associated context, backlinks, upstream/downstream relationships, creative expansion, or `think`-style synthesis. Follow only the most relevant relationships in small amounts.
+3. For ordinary precise lookup, use `categories.json` first to locate candidates; lightly check `graph.json` when direct neighbors may matter. Follow graph edges, candidate frontmatter `links`, and standard Markdown body links into note bodies when the question needs associated context, backlinks, upstream/downstream relationships, creative expansion, or `think`-style synthesis. The graph contains `root-index`, parent edges, resolved links, and dangling synapses. Follow only the most relevant relationships in small amounts.
 4. Treat dangling links as `dangling_synapse` warnings, not failures.
 
 ## Link Rules

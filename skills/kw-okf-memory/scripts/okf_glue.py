@@ -10,6 +10,8 @@ import posixpath
 import re
 import shutil
 import subprocess
+import sys
+import tempfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from urllib.parse import quote, unquote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -28,6 +30,9 @@ VALID_KNOWLEDGE_TYPES = {"RULE", "SOP", "DECISION", "CASE", "ENTITY", "SOURCE", 
 VALID_STATUS = {"active", "draft", "deprecated", "superseded"}
 VALID_CONFIDENCE = {"low", "medium", "high"}
 VALID_LANGUAGES = {"en-US", "zh-CN"}
+VALID_LANGUAGE_MODES = {"follow-user-language"}
+VALID_SOURCE_TYPES = {"url", "file", "vault_note", "codex_thread", "chat_excerpt", "manual_note"}
+STAGED_TARGET_KEY = "_kw_target_path"
 LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 WIKILINK_RE = re.compile(r"\[\[[^\]]+\]\]")
 URI_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
@@ -51,10 +56,47 @@ def today_slug() -> str:
     return configured_now().strftime("%Y-%m-%d")
 
 
+def read_text_utf8(path: Path) -> str:
+    return path.read_text(encoding="utf-8-sig")
+
+
 def load_config() -> dict:
     if CONFIG_PATH.exists():
-        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        try:
+            config = json.loads(read_text_utf8(CONFIG_PATH))
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"Invalid config.json: {CONFIG_PATH}: {exc}") from exc
+        if not isinstance(config, dict):
+            raise SystemExit(f"Invalid config.json: root value must be an object: {CONFIG_PATH}")
+        supported = config.get("supported_languages", sorted(VALID_LANGUAGES))
+        if not isinstance(supported, list) or not supported or any(x not in VALID_LANGUAGES for x in supported):
+            raise SystemExit(f"Invalid supported_languages in config.json: {supported}")
+        for key in ("default_language", "fallback_language"):
+            if config.get(key) and config[key] not in supported:
+                raise SystemExit(f"{key} must be included in supported_languages: {config[key]}")
+        if config.get("language_mode", "follow-user-language") not in VALID_LANGUAGE_MODES:
+            raise SystemExit(f"Invalid language_mode in config.json: {config.get('language_mode')}")
+        return config
     return {}
+
+
+def configured_language(kind: str = "fallback", config: dict | None = None) -> str:
+    config = config or load_config()
+    if kind == "system":
+        language = config.get("default_language") or config.get("fallback_language") or "en-US"
+    else:
+        language = config.get("fallback_language") or config.get("default_language") or "en-US"
+    if language not in VALID_LANGUAGES:
+        raise ValueError(f"Unsupported configured language: {language}")
+    return language
+
+
+def require_supported_language(language: str, config: dict | None = None) -> str:
+    config = config or load_config()
+    supported = config.get("supported_languages", sorted(VALID_LANGUAGES))
+    if language not in supported:
+        raise ValueError(f"Language is not enabled by supported_languages: {language}")
+    return language
 
 
 def get_vault(args) -> Path:
@@ -62,6 +104,22 @@ def get_vault(args) -> Path:
     if not raw:
         raise SystemExit("Vault path is required; pass --vault or set config.json vault_path.")
     return Path(raw).expanduser().resolve()
+
+
+def configured_vault_matches(cfg: dict, vault: Path) -> bool:
+    configured = cfg.get("vault_path")
+    if not configured:
+        return False
+    try:
+        return Path(configured).expanduser().resolve() == vault
+    except OSError:
+        return False
+
+
+def obsidian_vault_name(cfg: dict, vault: Path) -> str:
+    if configured_vault_matches(cfg, vault):
+        return cfg.get("obsidian_vault_name") or vault.name
+    return vault.name
 
 
 def normalize_rel(rel: str) -> str:
@@ -299,12 +357,50 @@ def dump_frontmatter(data: dict) -> str:
 
 
 def read_note(path: Path):
-    return parse_frontmatter(path.read_text(encoding="utf-8"))
+    return parse_frontmatter(read_text_utf8(path))
 
 
 def write_note(path: Path, fm: dict, body: str):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(dump_frontmatter(fm) + body.strip() + "\n", encoding="utf-8")
+    atomic_write_text(path, dump_frontmatter(fm) + body.strip() + "\n")
+
+
+def atomic_write_text(path: Path, text: str):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+
+
+def snapshot_files(paths: list[Path]) -> dict[Path, bytes | None]:
+    return {path: path.read_bytes() if path.exists() else None for path in paths}
+
+
+def restore_files(snapshot: dict[Path, bytes | None]):
+    for path, content in snapshot.items():
+        if content is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".rollback", dir=path.parent)
+            temp_path = Path(temp_name)
+            try:
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(content)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temp_path, path)
+            except Exception:
+                temp_path.unlink(missing_ok=True)
+                raise
 
 
 def id_from_path(rel: str) -> str:
@@ -359,9 +455,26 @@ def append_log(vault: Path, message: str):
         f.write(f"- {now_iso()} {message}\n")
 
 
-def root_index_frontmatter() -> dict:
+def root_index_frontmatter(existing: dict | None = None, language: str | None = None) -> dict:
+    existing = existing or {}
     ts = now_iso()
-    return {"id": "root-index", "type": "ROOT_INDEX", "status": "active", "title": "KnowledgeBase Index", "summary": "Global MOC root index maintained by kw-okf-memory build.", "created_at": ts, "updated_at": ts}
+    language = language or existing.get("language") or configured_language("system")
+    if language == "zh-CN":
+        title = "知识库索引"
+        summary = "由 kw-okf-memory build 维护的全局知识目录。"
+    else:
+        title = "KnowledgeBase Index"
+        summary = "Global knowledge index maintained by kw-okf-memory build."
+    return {
+        "id": "root-index",
+        "type": "ROOT_INDEX",
+        "status": "active",
+        "title": title,
+        "summary": summary,
+        "language": language,
+        "created_at": existing.get("created_at") or ts,
+        "updated_at": ts,
+    }
 
 
 def router_frontmatter(path_rel: str, title: str | None = None, language: str | None = None) -> dict:
@@ -373,13 +486,76 @@ def router_frontmatter(path_rel: str, title: str | None = None, language: str | 
         parent_path = str(PurePosixPath(*parts[:-2], "index.md"))
         parent_id = id_from_path(parent_path)
     ts = now_iso()
-    language = language or load_config().get("fallback_language", "en-US")
-    title = title or parts[-2].replace("_", " ").replace("-", " ").title()
-    return {"id": id_from_path(norm), "type": "ROUTER", "parent_id": parent_id, "parent_path": parent_path, "status": "active", "title": title, "summary": f"{title} related notes router.", "aliases": [], "tags": [], "language": language, "created_at": ts, "updated_at": ts}
+    language = require_supported_language(language or configured_language())
+    raw_title = parts[-2].replace("_", " ").replace("-", " ")
+    title = title or (raw_title if language == "zh-CN" else raw_title.title())
+    summary = f"{title} 相关知识的路由页。" if language == "zh-CN" else f"Router for knowledge related to {title}."
+    return {"id": id_from_path(norm), "type": "ROUTER", "parent_id": parent_id, "parent_path": parent_path, "status": "active", "title": title, "summary": summary, "aliases": [], "tags": [], "language": language, "created_at": ts, "updated_at": ts}
+
+
+def router_body(title: str, language: str) -> str:
+    if language == "zh-CN":
+        return f"# {title}\n\n本页用于组织 {title} 相关知识。\n"
+    return f"# {title}\n\nThis page organizes knowledge related to {title}.\n"
+
+
+def router_ancestor_paths(parent_path: str) -> list[str]:
+    if parent_path == "index.md":
+        return []
+    current = require_parent_path("LEAF_RULE", parent_path)
+    paths = []
+    while current != "index.md":
+        paths.append(current)
+        current = expected_parent_path("ROUTER", current)
+    return list(reversed(paths))
+
+
+def planned_routers(vault: Path, parent_path: str, language: str) -> list[dict]:
+    plans = []
+    for router_path in router_ancestor_paths(parent_path):
+        router_abs = resolve_in_vault(vault, router_path)
+        if router_abs.exists():
+            continue
+        fm = router_frontmatter(router_path, language=language)
+        plans.append({
+            "id": fm["id"],
+            "path": router_path,
+            "title": fm["title"],
+            "parent_id": fm["parent_id"],
+            "parent_path": fm["parent_path"],
+            "language": fm["language"],
+            "preview": dump_frontmatter(fm) + router_body(fm["title"], fm["language"]),
+        })
+    return plans
+
+
+def validate_existing_router_chain(vault: Path, parent_path: str):
+    for router_path in router_ancestor_paths(parent_path):
+        router_abs = resolve_in_vault(vault, router_path)
+        if not router_abs.exists():
+            continue
+        fm, _ = read_note(router_abs)
+        if fm.get("type") != "ROUTER":
+            raise ValueError(f"Parent chain page is not a ROUTER: {router_path}")
+        expected_id = id_from_path(router_path)
+        if fm.get("id") != expected_id:
+            raise ValueError(f"ROUTER id does not match path: expected {expected_id}, got {fm.get('id')}")
+        expected_path = expected_parent_path("ROUTER", router_path)
+        if fm.get("parent_path") != expected_path:
+            raise ValueError(f"ROUTER parent_path must be {expected_path}: {router_path}")
+        expected_parent_id = "root-index" if expected_path == "index.md" else id_from_path(expected_path)
+        if fm.get("parent_id") != expected_parent_id:
+            raise ValueError(f"ROUTER parent_id must be {expected_parent_id}: {router_path}")
+
+
+def required_body_headings(language: str) -> list[str]:
+    if language == "zh-CN":
+        return ["## 一句话结论", "## 适用边界", "## 证据与来源", "## 知识演进日志"]
+    return ["## One-Sentence Conclusion", "## Scope", "## Evidence and Sources", "## Evolution Log"]
 
 
 def default_body(title: str, summary: str, body: str, links: list[str], language: str = "en-US", note_rel: str | None = None) -> str:
-    if "## " in body:
+    if body and all(heading in body for heading in required_body_headings(language)):
         return body
     empty_links = "- None" if language == "en-US" else "- 暂无"
     def format_link(link: str) -> str:
@@ -454,20 +630,27 @@ def iter_wiki_notes(vault: Path):
             yield path.relative_to(vault).as_posix(), path
 
 
-def body_links(rel: str, body: str) -> list[str]:
-    links = []
+def body_link_results(rel: str, body: str) -> tuple[list[str], list[str]]:
+    links, errors = [], []
     for target in LINK_RE.findall(body):
         if URI_RE.match(target) or target.startswith("#"):
             continue
         try:
             links.append(normalize_markdown_link(rel, target))
-        except ValueError:
-            pass
-    return links
+        except ValueError as exc:
+            errors.append(f"{target}: {exc}")
+    return links, errors
 
 
-def render_index(categories: dict) -> str:
-    lines = ["# KnowledgeBase Index", "", "Generated by `kw-okf-memory build`.", ""]
+def body_links(rel: str, body: str) -> list[str]:
+    return body_link_results(rel, body)[0]
+
+
+def render_index(categories: dict, language: str = "en-US") -> str:
+    if language == "zh-CN":
+        lines = ["# 知识库索引", "", "由 `kw-okf-memory build` 自动生成。", ""]
+    else:
+        lines = ["# KnowledgeBase Index", "", "Generated by `kw-okf-memory build`.", ""]
     for rel, item in sorted(categories.items()):
         lines.append(f"- [{item.get('title') or rel}]({rel}) - `{item.get('type','')}` `{item.get('knowledge_type','')}`")
     return "\n".join(lines) + "\n"
@@ -495,7 +678,13 @@ def render_tag_registry(config=None) -> str:
 
 def build_indexes(vault: Path, log: bool = True):
     ensure_vault(vault)
-    categories, nodes, edges, id_by_path, parsed = {}, [], [], {}, []
+    root_path = vault / "index.md"
+    existing_root, _ = read_note(root_path) if root_path.exists() else ({}, "")
+    root_language = existing_root.get("language") or configured_language("system")
+    rebuilt_root = root_index_frontmatter(existing_root, root_language)
+    categories = {}
+    nodes = [{"path": "index.md", "id": "root-index", "type": "ROOT_INDEX", "knowledge_type": "", "title": rebuilt_root["title"]}]
+    edges, id_by_path, parsed = [], {"index.md": "root-index"}, []
     for rel, path in iter_wiki_notes(vault):
         fm, body = read_note(path)
         node_id = fm.get("id") or id_from_path(rel)
@@ -519,9 +708,9 @@ def build_indexes(vault: Path, log: bool = True):
             seen.add(target_path)
             target_id = id_by_path.get(target_path)
             edges.append({"from": source_id, "to": target_id, "target_path": target_path, "kind": "link" if target_id else "dangling_synapse"})
-    (vault / "categories.json").write_text(json.dumps(categories, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    (vault / "graph.json").write_text(json.dumps({"nodes": nodes, "edges": edges}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    write_note(vault / "index.md", root_index_frontmatter(), render_index(categories))
+    atomic_write_text(vault / "categories.json", json.dumps(categories, ensure_ascii=False, indent=2) + "\n")
+    atomic_write_text(vault / "graph.json", json.dumps({"nodes": nodes, "edges": edges}, ensure_ascii=False, indent=2) + "\n")
+    write_note(root_path, rebuilt_root, render_index(categories, root_language))
     if log:
         append_log(vault, f"BUILD {len(categories)} wiki nodes")
     return categories, nodes, edges
@@ -530,9 +719,13 @@ def issue(severity: str, code: str, path: str, message: str) -> dict:
     return {"severity": severity, "code": code, "path": path, "message": message}
 
 
-def validate_source_ref(rel: str, ref: dict) -> list[dict]:
+def validate_source_ref(rel: str, ref) -> list[dict]:
     issues = []
+    if not isinstance(ref, dict):
+        return [issue("error", "illegal_source_ref_type", rel, "Each source_refs item must be an object.")]
     typ, path = ref.get("type", ""), ref.get("path", "")
+    if typ not in VALID_SOURCE_TYPES:
+        issues.append(issue("error", "illegal_source_type", rel, f"Invalid source type: {typ}"))
     if typ == "url" and path and not str(path).startswith(("http://", "https://")):
         issues.append(issue("error", "illegal_source_url", rel, f"Invalid source URL: {path}"))
     if typ == "vault_note" and path:
@@ -542,12 +735,47 @@ def validate_source_ref(rel: str, ref: dict) -> list[dict]:
             issues.append(issue("error", "illegal_source_path", rel, str(exc)))
     if typ in {"codex_thread", "chat_excerpt", "manual_note"} and not (ref.get("id") or ref.get("excerpt")):
         issues.append(issue("error", "weak_source_ref", rel, "Source ref needs id or excerpt."))
+    unique = []
+    seen = set()
+    for item in issues:
+        key = (item["severity"], item["code"], item["path"], item["message"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+    return unique
+
+
+def valid_iso_datetime(value) -> bool:
+    if not value:
+        return False
+    try:
+        dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return True
+    except ValueError:
+        return False
+
+
+def body_structure_issues(rel: str, fm: dict, body: str) -> list[dict]:
+    language = fm.get("language") or "en-US"
+    issues = []
+    if not re.search(r"^#\s+\S", body, re.M):
+        issues.append(issue("warning", "missing_body_title", rel, "Body should start with a Markdown H1 title."))
+    for heading in required_body_headings(language):
+        if heading not in body:
+            issues.append(issue("warning", "missing_body_section", rel, f"Recommended body section missing: {heading}"))
     return issues
 
 
 def audit_vault(vault: Path):
     ensure_vault(vault)
     issues, ids = [], {}
+    root_path = vault / "index.md"
+    if not root_path.exists():
+        issues.append(issue("error", "missing_root_index", "index.md", "Root index.md is missing."))
+    else:
+        root_fm, _ = read_note(root_path)
+        if root_fm.get("id") != "root-index" or root_fm.get("type") != "ROOT_INDEX":
+            issues.append(issue("error", "illegal_root_index", "index.md", "Root index.md must use id root-index and type ROOT_INDEX."))
     for rel, path in iter_wiki_notes(vault):
         fm, body = read_note(path)
         node_id = fm.get("id")
@@ -557,9 +785,14 @@ def audit_vault(vault: Path):
             issues.append(issue("error", "duplicate_id", rel, f"Duplicate id with {ids[node_id]}."))
         else:
             ids[node_id] = rel
+        expected_id = id_from_path(rel)
+        if node_id and node_id != expected_id:
+            issues.append(issue("error", "id_path_mismatch", rel, f"id must match path: expected {expected_id}, got {node_id}."))
         typ = fm.get("type")
         if typ not in VALID_TYPES:
             issues.append(issue("error", "illegal_type", rel, f"Invalid type: {typ}"))
+        if typ == "ROOT_INDEX":
+            issues.append(issue("error", "illegal_root_index_path", rel, "ROOT_INDEX is only valid at Vault root index.md."))
         parts = PurePosixPath(rel).parts
         if typ == "ROUTER" and (len(parts) < 4 or parts[0] != "wiki" or parts[1] not in ALLOWED_WIKI_FIRST or parts[-1] != "index.md"):
             issues.append(issue("error", "illegal_router_path", rel, "ROUTER path must be wiki/<fixed-category>/<topic>/index.md or deeper router index.md."))
@@ -604,36 +837,60 @@ def audit_vault(vault: Path):
                 issues.append(issue("error", "illegal_language", rel, f"Invalid language: {language}"))
         if fm.get("confidence") and fm.get("confidence") not in VALID_CONFIDENCE:
             issues.append(issue("error", "illegal_confidence", rel, f"Invalid confidence: {fm.get('confidence')}"))
-        for image in fm.get("images", []) or []:
-            try:
-                if not resolve_in_vault(vault, image).exists():
-                    issues.append(issue("error", "missing_image", rel, f"Image missing: {image}"))
-            except ValueError as exc:
-                issues.append(issue("error", "illegal_image_path", rel, str(exc)))
-        for link in fm.get("links", []) or []:
-            try:
-                normalize_rel(link)
-            except ValueError as exc:
-                issues.append(issue("error", "illegal_link_path", rel, str(exc)))
-        for ref in fm.get("source_refs", []) or []:
-            issues.extend(validate_source_ref(rel, ref))
+        images = fm.get("images", []) or []
+        if isinstance(images, list):
+            for image in images:
+                try:
+                    if not resolve_in_vault(vault, image).exists():
+                        issues.append(issue("error", "missing_image", rel, f"Image missing: {image}"))
+                except ValueError as exc:
+                    issues.append(issue("error", "illegal_image_path", rel, str(exc)))
+        links = fm.get("links", []) or []
+        if isinstance(links, list):
+            for link in links:
+                try:
+                    target_rel = normalize_rel(link)
+                    target = resolve_in_vault(vault, target_rel)
+                    if target_rel.endswith(".md") and not target.exists():
+                        issues.append(issue("warning", "dangling_synapse", rel, f"Frontmatter link target missing: {target_rel}"))
+                except ValueError as exc:
+                    issues.append(issue("error", "illegal_link_path", rel, str(exc)))
+        source_refs = fm.get("source_refs", []) or []
+        if isinstance(source_refs, list):
+            for ref in source_refs:
+                issues.extend(validate_source_ref(rel, ref))
+        for field in ("created_at", "updated_at"):
+            if field in fm and not valid_iso_datetime(fm.get(field)):
+                issues.append(issue("error", "illegal_timestamp", rel, f"Invalid ISO 8601 {field}: {fm.get(field)}"))
         review_after = fm.get("review_after")
         if fm.get("status") == "active" and review_after:
             try:
-                if dt.date.fromisoformat(str(review_after)[:10]) < dt.datetime.now().astimezone().date():
+                if dt.date.fromisoformat(str(review_after)[:10]) < configured_now().date():
                     issues.append(issue("warning", "expired_review", rel, f"review_after passed: {review_after}"))
             except ValueError:
                 issues.append(issue("error", "illegal_review_after", rel, f"Invalid review_after: {review_after}"))
         if WIKILINK_RE.search(body):
             issues.append(issue("error", "private_wikilink", rel, "Obsidian [[WikiLinks]] are not allowed."))
-        for link in body_links(rel, body):
+        parsed_links, link_errors = body_link_results(rel, body)
+        for message in link_errors:
+            issues.append(issue("error", "illegal_body_link", rel, message))
+        for link in parsed_links:
             try:
                 target = resolve_in_vault(vault, link)
                 if link.endswith(".md") and not target.exists():
                     issues.append(issue("warning", "dangling_synapse", rel, f"Markdown link target missing: {link}"))
             except ValueError as exc:
                 issues.append(issue("error", "illegal_body_link", rel, str(exc)))
-    return issues
+        if typ == "LEAF_RULE":
+            issues.extend(body_structure_issues(rel, fm, body))
+    unique = []
+    seen = set()
+    for item in issues:
+        key = (item["severity"], item["code"], item["path"], item["message"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+    return unique
 
 
 def planned_dirs(vault: Path, target_rel: str) -> list[str]:
@@ -652,22 +909,29 @@ def planned_dirs(vault: Path, target_rel: str) -> list[str]:
 
 def command_init(args):
     vault = get_vault(args)
+    config = load_config()
+    language = configured_language("system", config)
     vault.mkdir(parents=True, exist_ok=True)
+    created = []
     for rel in FIXED_DIRS:
-        resolve_in_vault(vault, rel).mkdir(parents=True, exist_ok=True)
+        target = resolve_in_vault(vault, rel)
+        if not target.exists():
+            target.mkdir(parents=True, exist_ok=True)
+            created.append(rel)
     if not (vault / "index.md").exists():
-        write_note(vault / "index.md", root_index_frontmatter(), "# KnowledgeBase Index\n\nThis index is maintained by `build`.\n")
+        body = "# 知识库索引\n\n此索引由 `build` 维护。\n" if language == "zh-CN" else "# KnowledgeBase Index\n\nThis index is maintained by `build`.\n"
+        write_note(vault / "index.md", root_index_frontmatter(language=language), body)
     (vault / "log.md").touch(exist_ok=True)
     if not (vault / "categories.json").exists():
-        (vault / "categories.json").write_text("{}\n", encoding="utf-8")
+        atomic_write_text(vault / "categories.json", "{}\n")
     if not (vault / "graph.json").exists():
-        (vault / "graph.json").write_text(json.dumps({"nodes": [], "edges": []}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        atomic_write_text(vault / "graph.json", json.dumps({"nodes": [], "edges": []}, ensure_ascii=False, indent=2) + "\n")
     if not (vault / "error_book.yaml").exists():
-        (vault / "error_book.yaml").write_text("[]\n", encoding="utf-8")
+        atomic_write_text(vault / "error_book.yaml", "[]\n")
     if not (vault / "tags.md").exists():
-        (vault / "tags.md").write_text(render_tag_registry(), encoding="utf-8")
+        atomic_write_text(vault / "tags.md", render_tag_registry(config))
     append_log(vault, "INIT vault skeleton")
-    print(jsonish({"ok": True, "vault": str(vault), "created_skeleton": FIXED_DIRS}))
+    print(jsonish({"ok": True, "vault": str(vault), "created_skeleton": created}))
 
 
 def command_build(args):
@@ -679,7 +943,7 @@ def command_audit(args):
     vault = get_vault(args)
     issues = audit_vault(vault)
     if args.write_error_book:
-        (vault / "error_book.yaml").write_text(json.dumps(issues, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        atomic_write_text(vault / "error_book.yaml", json.dumps(issues, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps({"ok": not any(i["severity"] == "error" for i in issues), "issues": issues}, ensure_ascii=False, indent=2))
 
 
@@ -687,16 +951,29 @@ def command_search(args):
     vault = get_vault(args)
     ensure_vault(vault)
     cats_path = vault / "categories.json"
-    if not cats_path.exists():
+    wiki_mtime = max((path.stat().st_mtime for _, path in iter_wiki_notes(vault)), default=0)
+    if not cats_path.exists() or cats_path.stat().st_mtime < wiki_mtime:
         build_indexes(vault)
-    cats = json.loads(cats_path.read_text(encoding="utf-8") or "{}")
+    cats = json.loads(read_text_utf8(cats_path) or "{}")
     tokens = [t for t in re.split(r"\s+", args.query.lower()) if t]
     results = []
     for rel, item in cats.items():
-        hay = " ".join(str(item.get(k, "")) for k in ("title", "summary", "aliases", "tags", "scope", "type", "knowledge_type")).lower()
-        score = sum(1 for t in tokens if t in hay)
+        fields = {
+            "path": rel,
+            "id": item.get("id", ""),
+            "parent_path": item.get("parent_path", ""),
+            "title": item.get("title", ""),
+            "summary": item.get("summary", ""),
+            "aliases": item.get("aliases", []),
+            "tags": item.get("tags", []),
+            "scope": item.get("scope", ""),
+            "type": item.get("type", ""),
+            "knowledge_type": item.get("knowledge_type", ""),
+        }
+        matched_fields = sorted({name for name, value in fields.items() if any(token in str(value).lower() for token in tokens)})
+        score = sum(1 for token in tokens if any(token in str(value).lower() for value in fields.values()))
         if score or not tokens:
-            results.append({"path": rel, "score": score, **item})
+            results.append({"path": rel, "score": score, "matched_fields": matched_fields, **item})
     results.sort(key=lambda x: (-x["score"], x["path"]))
     print(json.dumps(results[: args.limit], ensure_ascii=False, indent=2))
 
@@ -704,26 +981,31 @@ def command_search(args):
 def command_stage(args):
     vault = get_vault(args)
     ensure_vault(vault)
+    config = load_config()
     target = require_target_for_type(args.type, args.target)
     parent_path = require_parent_path(args.type, args.parent_path, target)
-    parent_abs = validate_parent_identity(vault, parent_path, args.parent_id)
+    validate_existing_router_chain(vault, parent_path)
+    validate_parent_identity(vault, parent_path, args.parent_id)
     if args.type == "LEAF_RULE" and args.knowledge_type not in VALID_KNOWLEDGE_TYPES:
         raise SystemExit("LEAF_RULE requires a valid --knowledge-type.")
     ts = now_iso()
     links = [normalize_rel(x) for x in (args.link or [])]
     images = [require_image_dest(x) for x in (args.image or [])]
-    fm = {"id": id_from_path(target), "type": args.type, "parent_id": args.parent_id, "parent_path": parent_path, "status": "active", "title": args.title, "summary": args.summary, "aliases": parse_csv(args.aliases), "tags": parse_csv(args.tags), "scope": args.scope or "", "confidence": args.confidence, "source_refs": [parse_source_ref(x) for x in (args.source_ref or [])], "images": images, "links": links, "supersedes": [], "superseded_by": [], "created_at": ts, "updated_at": ts, "review_after": args.review_after or "", "language": args.language or load_config().get("fallback_language", "en-US")}
+    language = require_supported_language(args.language or configured_language(config=config), config)
+    fm = {STAGED_TARGET_KEY: target, "id": id_from_path(target), "type": args.type, "parent_id": args.parent_id, "parent_path": parent_path, "status": "active", "title": args.title, "summary": args.summary, "aliases": parse_csv(args.aliases), "tags": parse_csv(args.tags), "scope": args.scope or "", "confidence": args.confidence, "source_refs": [parse_source_ref(x) for x in (args.source_ref or [])], "images": images, "links": links, "supersedes": [], "superseded_by": [], "created_at": ts, "updated_at": ts, "review_after": args.review_after or "", "language": language}
     if args.type == "LEAF_RULE":
         fm["knowledge_type"] = args.knowledge_type
     body = default_body(args.title, args.summary, args.body or "", links, fm["language"], target)
-    draft_rel = f"inbox/staged/{today_slug()}-{slugify(PurePosixPath(target).stem)}.md"
+    target_hash = hashlib.sha1(target.encode("utf-8")).hexdigest()[:10]
+    draft_rel = f"inbox/staged/{today_slug()}-{slugify(PurePosixPath(target).stem)}-{target_hash}.md"
+    counter = 2
+    while resolve_in_vault(vault, draft_rel).exists():
+        draft_rel = f"inbox/staged/{today_slug()}-{slugify(PurePosixPath(target).stem)}-{target_hash}-{counter}.md"
+        counter += 1
     draft_path = resolve_in_vault(vault, draft_rel)
     write_note(draft_path, fm, body)
-    planned_router = []
-    if parent_path != "index.md" and not parent_abs.exists():
-        rfm = router_frontmatter(parent_path, language=fm.get("language"))
-        planned_router.append({"id": rfm["id"], "path": parent_path, "title": rfm["title"], "parent_id": rfm["parent_id"], "parent_path": rfm["parent_path"], "preview": dump_frontmatter(rfm) + f"# {rfm['title']}\n\nRouter page.\n"})
-    print(json.dumps({"ok": True, "draft": draft_rel, "target": target, "planned_directory_creates": planned_dirs(vault, target), "planned_router_creates": planned_router, "preview": draft_path.read_text(encoding="utf-8")}, ensure_ascii=False, indent=2))
+    planned_router = planned_routers(vault, parent_path, fm["language"])
+    print(json.dumps({"ok": True, "draft": draft_rel, "target": target, "planned_directory_creates": planned_dirs(vault, target), "planned_router_creates": planned_router, "preview": read_text_utf8(draft_path)}, ensure_ascii=False, indent=2))
 
 
 def archive_committed_draft(vault: Path, draft_rel: str, draft_path: Path) -> str:
@@ -736,16 +1018,69 @@ def archive_committed_draft(vault: Path, draft_rel: str, draft_path: Path) -> st
     shutil.move(str(draft_path), str(archive_path))
     return archive_path.relative_to(vault).as_posix()
 
+
+def validate_commit_note(vault: Path, rel: str, fm: dict, body: str) -> list[dict]:
+    issues = []
+    required = ["id", "type", "parent_id", "parent_path", "status", "title", "summary", "aliases", "tags", "scope", "confidence", "source_refs", "images", "links", "supersedes", "superseded_by", "created_at", "updated_at", "review_after", "language"]
+    if fm.get("type") == "LEAF_RULE":
+        required.append("knowledge_type")
+    for field in required:
+        if field not in fm:
+            issues.append(issue("error", "missing_commit_field", rel, f"Missing required field: {field}"))
+    if fm.get("id") != id_from_path(rel):
+        issues.append(issue("error", "id_path_mismatch", rel, f"id must match target path: {id_from_path(rel)}"))
+    if fm.get("status") not in VALID_STATUS:
+        issues.append(issue("error", "illegal_status", rel, f"Invalid status: {fm.get('status')}"))
+    if fm.get("confidence") not in VALID_CONFIDENCE:
+        issues.append(issue("error", "illegal_confidence", rel, f"Invalid confidence: {fm.get('confidence')}"))
+    if fm.get("language") not in VALID_LANGUAGES:
+        issues.append(issue("error", "illegal_language", rel, f"Invalid language: {fm.get('language')}"))
+    if fm.get("type") == "LEAF_RULE" and fm.get("knowledge_type") not in VALID_KNOWLEDGE_TYPES:
+        issues.append(issue("error", "illegal_knowledge_type", rel, f"Invalid knowledge_type: {fm.get('knowledge_type')}"))
+    for field in ("aliases", "tags", "source_refs", "images", "links", "supersedes", "superseded_by"):
+        if not isinstance(fm.get(field), list):
+            issues.append(issue("error", "illegal_commit_field_type", rel, f"Field must be a list: {field}"))
+    for field in ("created_at", "updated_at"):
+        if not valid_iso_datetime(fm.get(field)):
+            issues.append(issue("error", "illegal_timestamp", rel, f"Invalid ISO 8601 {field}: {fm.get(field)}"))
+    for image in fm.get("images", []) if isinstance(fm.get("images"), list) else []:
+        try:
+            if not resolve_in_vault(vault, image).exists():
+                issues.append(issue("error", "missing_image", rel, f"Image missing: {image}"))
+        except ValueError as exc:
+            issues.append(issue("error", "illegal_image_path", rel, str(exc)))
+    for link in fm.get("links", []) if isinstance(fm.get("links"), list) else []:
+        try:
+            normalize_rel(link)
+        except ValueError as exc:
+            issues.append(issue("error", "illegal_link_path", rel, str(exc)))
+    for ref in fm.get("source_refs", []) if isinstance(fm.get("source_refs"), list) else []:
+        issues.extend(validate_source_ref(rel, ref))
+    if WIKILINK_RE.search(body):
+        issues.append(issue("error", "private_wikilink", rel, "Obsidian [[WikiLinks]] are not allowed."))
+    _, link_errors = body_link_results(rel, body)
+    for message in link_errors:
+        issues.append(issue("error", "illegal_body_link", rel, message))
+    issues.extend(body_structure_issues(rel, fm, body))
+    return issues
+
 def command_commit(args):
     vault = get_vault(args)
     ensure_vault(vault)
+    cfg = load_config()
     draft_rel = require_draft(args.draft)
     draft_path = resolve_in_vault(vault, draft_rel)
     if not draft_path.exists():
         raise SystemExit(f"Draft not found: {draft_rel}")
-    fm, _ = read_note(draft_path)
+    fm, body = read_note(draft_path)
     typ = fm.get("type")
     target_rel = require_target_for_type(typ, args.target)
+    bound_target = fm.get(STAGED_TARGET_KEY)
+    if bound_target and normalize_rel(bound_target) != target_rel:
+        raise SystemExit(f"Draft is bound to {bound_target}, not {target_rel}.")
+    expected_id = id_from_path(target_rel)
+    if fm.get("id") != expected_id:
+        raise SystemExit(f"Draft id does not match target path: expected {expected_id}, got {fm.get('id')}.")
     target_path = resolve_in_vault(vault, target_rel)
     if target_path.exists() and not args.overwrite:
         raise SystemExit("Target exists. Use --overwrite only after showing a diff and receiving explicit confirmation.")
@@ -753,31 +1088,119 @@ def command_commit(args):
     if missing_dirs and not args.allow_create_dirs:
         raise SystemExit(f"Missing parent directories require --allow-create-dirs: {missing_dirs}")
     parent_path = require_parent_path(typ, fm.get("parent_path", ""), target_rel)
-    parent_abs = validate_parent_identity(vault, parent_path, fm.get("parent_id", ""))
-    created_router = None
-    if parent_path != "index.md" and not parent_abs.exists():
-        if not args.allow_create_router:
-            raise SystemExit(f"Missing parent ROUTER requires --allow-create-router: {parent_path}")
-        rfm = router_frontmatter(parent_path, language=fm.get("language"))
-        write_note(parent_abs, rfm, f"# {rfm['title']}\n\nRouter page.\n")
-        created_router = parent_path
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(draft_path, target_path)
-    append_log(vault, f"COMMIT {draft_rel} -> {target_rel}")
-    cats, nodes, edges = build_indexes(vault)
-    archived_draft = archive_committed_draft(vault, draft_rel, draft_path)
-    append_log(vault, f"ARCHIVE_DRAFT {draft_rel} -> {archived_draft}")
-    cfg = load_config()
+    validate_existing_router_chain(vault, parent_path)
+    validate_parent_identity(vault, parent_path, fm.get("parent_id", ""))
+    router_plans = planned_routers(vault, parent_path, fm.get("language") or configured_language())
+    if router_plans and not args.allow_create_router:
+        raise SystemExit(f"Missing parent ROUTER chain requires --allow-create-router: {[x['path'] for x in router_plans]}")
+    final_fm = dict(fm)
+    final_fm.pop(STAGED_TARGET_KEY, None)
+    if target_path.exists() and args.overwrite:
+        existing_fm, _ = read_note(target_path)
+        final_fm["created_at"] = existing_fm.get("created_at") or final_fm.get("created_at")
+    final_fm["updated_at"] = now_iso()
+    preflight = validate_commit_note(vault, target_rel, final_fm, body)
+    errors = [x for x in preflight if x["severity"] == "error"]
+    if errors:
+        raise SystemExit(json.dumps({"ok": False, "stage": "preflight", "issues": errors}, ensure_ascii=False, indent=2))
+
+    router_paths = [resolve_in_vault(vault, plan["path"]) for plan in router_plans]
+    system_paths = [vault / "index.md", vault / "categories.json", vault / "graph.json", vault / "log.md"]
+    snapshot = snapshot_files([target_path, *router_paths, *system_paths])
+    archived_draft = None
+    created_routers = []
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        for plan, router_path in zip(router_plans, router_paths):
+            rfm = router_frontmatter(plan["path"], title=plan["title"], language=plan["language"])
+            write_note(router_path, rfm, router_body(rfm["title"], rfm["language"]))
+            created_routers.append(plan["path"])
+        write_note(target_path, final_fm, body)
+        cats, nodes, edges = build_indexes(vault, log=False)
+        changed_paths = {target_rel, *created_routers}
+        changed_errors = [x for x in audit_vault(vault) if x["severity"] == "error" and x["path"] in changed_paths]
+        if changed_errors:
+            raise RuntimeError(json.dumps({"stage": "post_commit_audit", "issues": changed_errors}, ensure_ascii=False))
+        archived_draft = archive_committed_draft(vault, draft_rel, draft_path)
+        append_log(vault, f"COMMIT {draft_rel} -> {target_rel}")
+        append_log(vault, f"BUILD {len(cats)} wiki nodes")
+        append_log(vault, f"ARCHIVE_DRAFT {draft_rel} -> {archived_draft}")
+    except Exception:
+        if archived_draft:
+            archived_path = resolve_in_vault(vault, archived_draft)
+            if archived_path.exists() and not draft_path.exists():
+                draft_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(archived_path), str(draft_path))
+        restore_files(snapshot)
+        for rel in sorted(missing_dirs, key=lambda x: len(PurePosixPath(x).parts), reverse=True):
+            path = resolve_in_vault(vault, rel)
+            if path.exists():
+                try:
+                    path.rmdir()
+                except OSError:
+                    pass
+        raise
     obsidian_uri = None
+    warnings = [f"{x['code']}: {x['message']}" for x in preflight if x["severity"] == "warning"]
     if cfg.get("obsidian_auto_open_after_commit"):
-        vault_name = cfg.get("obsidian_vault_name") or vault.name
+        vault_name = obsidian_vault_name(cfg, vault)
         obsidian_uri = f"obsidian://open?vault={quote(vault_name)}&file={quote(target_rel)}"
-        open_external(obsidian_uri, cfg.get("obsidian_cli_path"))
-    print(json.dumps({"ok": True, "target": target_rel, "created_router": created_router, "archived_draft": archived_draft, "categories": len(cats), "edges": len(edges), "obsidian_uri": obsidian_uri}, ensure_ascii=False, indent=2))
+        if cfg.get("vault_path") and not configured_vault_matches(cfg, vault):
+            warnings.append("Obsidian auto-open skipped: current vault does not match configured vault_path.")
+        else:
+            warning = open_external(obsidian_uri, cfg.get("obsidian_cli_path"))
+            if warning:
+                warnings.append(f"Obsidian open warning: {warning}")
+    print(json.dumps({"ok": True, "target": target_rel, "created_router": created_routers[-1] if created_routers else None, "created_routers": created_routers, "archived_draft": archived_draft, "categories": len(cats), "nodes": len(nodes), "edges": len(edges), "obsidian_uri": obsidian_uri, "warnings": warnings}, ensure_ascii=False, indent=2))
+
+
+def planned_asset_dirs(vault: Path, dest_rel: str) -> list[str]:
+    norm = require_image_dest(dest_rel)
+    parent = PurePosixPath(norm).parent
+    fixed = {"assets", "assets/products", "assets/screenshots", "assets/references", "assets/images"}
+    acc, missing = [], []
+    for part in parent.parts:
+        acc.append(part)
+        rel = str(PurePosixPath(*acc))
+        if rel in fixed:
+            continue
+        if not resolve_in_vault(vault, rel).exists():
+            missing.append(rel)
+    return missing
+
+
+def parse_ratio(value: str) -> tuple[int, int]:
+    match = re.fullmatch(r"\s*(\d+)\s*:\s*(\d+)\s*", value or "")
+    if not match or int(match.group(1)) <= 0 or int(match.group(2)) <= 0:
+        raise ValueError(f"Ratio must use positive W:H form, for example 3:4: {value}")
+    return int(match.group(1)), int(match.group(2))
+
+
+def fit_image_canvas(img, ratio: str, background: str, force_ratio: bool):
+    from PIL import Image
+    rw, rh = parse_ratio(ratio)
+    w, h = img.size
+    should_fit = force_ratio or w == h
+    if not should_fit:
+        return img, "archive-original-ratio"
+    target_ratio = rw / rh
+    current_ratio = w / h
+    if abs(current_ratio - target_ratio) < 1e-9:
+        return img, "already-target-ratio"
+    if current_ratio > target_ratio:
+        new_w, new_h = w, int(round(w / target_ratio))
+    else:
+        new_w, new_h = int(round(h * target_ratio)), h
+    out = Image.new("RGB", (new_w, new_h), background)
+    out.paste(img, ((new_w - w) // 2, (new_h - h) // 2))
+    return out, "expand-canvas"
 
 
 def command_process_img(args):
-    from PIL import Image
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise SystemExit("process-img requires Pillow. Install it with: python -m pip install Pillow") from exc
     cfg = load_config()
     ratio = args.ratio or cfg.get("image_default_ratio", "3:4")
     background = args.background or cfg.get("image_default_background", "white")
@@ -788,55 +1211,192 @@ def command_process_img(args):
         raise SystemExit(f"Source image not found: {src}")
     dest_rel = require_image_dest(args.dest)
     dest = resolve_in_vault(vault, dest_rel)
+    missing_dirs = planned_asset_dirs(vault, dest_rel)
+    if missing_dirs and not (args.preview or args.allow_create_dirs):
+        raise SystemExit(f"Missing asset directories require --allow-create-dirs after preview: {missing_dirs}")
+    if dest.exists() and not (args.preview or args.overwrite):
+        raise SystemExit("Image target exists. Use --overwrite only after preview and explicit confirmation.")
+    with Image.open(src) as source:
+        img = source.convert("RGB")
+    out, operation = fit_image_canvas(img, ratio, background, args.force_ratio)
+    result = {"ok": True, "preview": bool(args.preview), "path": dest_rel, "source_size": list(img.size), "output_size": list(out.size), "operation": operation, "ratio": ratio, "planned_directory_creates": missing_dirs, "target_exists": dest.exists()}
+    if args.preview:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
     dest.parent.mkdir(parents=True, exist_ok=True)
-    img = Image.open(src).convert("RGB")
-    w, h = img.size
-    out = img
-    if ratio == "3:4" and w == h:
-        new_h = int(round(w * 4 / 3))
-        out = Image.new("RGB", (w, new_h), background)
-        out.paste(img, (0, (new_h - h) // 2))
     ext = dest.suffix.lower()
-    if ext in {".jpg", ".jpeg"}:
-        out.save(dest, format="JPEG", quality=95)
-    elif ext == ".png":
-        out.save(dest, format="PNG")
-    elif ext == ".webp":
-        out.save(dest, format="WEBP", quality=95)
-    else:
-        raise SystemExit(f"Unsupported image destination extension: {ext}")
-    print(json.dumps({"ok": True, "path": dest_rel, "size": list(out.size)}, ensure_ascii=False, indent=2))
+    fd, temp_name = tempfile.mkstemp(prefix=f".{dest.name}.", suffix=ext, dir=dest.parent)
+    os.close(fd)
+    temp_path = Path(temp_name)
+    try:
+        if ext in {".jpg", ".jpeg"}:
+            out.save(temp_path, format="JPEG", quality=95)
+        elif ext == ".png":
+            out.save(temp_path, format="PNG")
+        elif ext == ".webp":
+            out.save(temp_path, format="WEBP", quality=95)
+        else:
+            raise SystemExit(f"Unsupported image destination extension: {ext}")
+        os.replace(temp_path, dest)
+    finally:
+        temp_path.unlink(missing_ok=True)
+    result["preview"] = False
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
-def open_external(uri: str, cli_path: str | None):
-    if cli_path and Path(cli_path).exists():
+def export_concept_frontmatter(fm: dict) -> dict:
+    exported = {
+        "type": fm.get("knowledge_type") or fm.get("type") or "Concept",
+        "title": fm.get("title", ""),
+        "description": fm.get("summary", ""),
+        "tags": fm.get("tags", []),
+        "timestamp": fm.get("updated_at", ""),
+        "kw_id": fm.get("id", ""),
+        "kw_status": fm.get("status", ""),
+        "kw_confidence": fm.get("confidence", ""),
+        "kw_language": fm.get("language", ""),
+        "kw_source_refs": fm.get("source_refs", []),
+        "kw_images": fm.get("images", []),
+        "kw_links": ["/" + link[len("wiki/"):] if str(link).startswith("wiki/") else link for link in fm.get("links", [])],
+    }
+    return {key: value for key, value in exported.items() if value not in ("", [], None)}
+
+
+def render_export_index(directory: PurePosixPath, concepts: dict[str, dict], directories: set[str]) -> str:
+    title = "Knowledge Bundle" if str(directory) == "." else directory.name.replace("-", " ").replace("_", " ").title()
+    lines = [f"# {title}", ""]
+    base_parts = () if str(directory) == "." else directory.parts
+    child_dirs = set()
+    for path in directories:
+        parts = PurePosixPath(path).parts
+        if len(parts) > len(base_parts) and tuple(parts[:len(base_parts)]) == tuple(base_parts):
+            child_dirs.add(parts[len(base_parts)])
+    child_dirs = sorted(child_dirs)
+    direct_concepts = sorted((path, meta) for path, meta in concepts.items() if PurePosixPath(path).parent == directory)
+    if child_dirs:
+        lines.extend(["## Sections", ""])
+        for child in child_dirs:
+            lines.append(f"- [{child.replace('-', ' ').replace('_', ' ').title()}]({child}/) - Knowledge section.")
+        lines.append("")
+    if direct_concepts:
+        lines.extend(["## Concepts", ""])
+        for path, meta in direct_concepts:
+            lines.append(f"- [{meta.get('title') or PurePosixPath(path).stem}]({PurePosixPath(path).name}) - {meta.get('description', '')}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def command_export_okf(args):
+    vault = get_vault(args)
+    ensure_vault(vault)
+    output = Path(args.out).expanduser().resolve()
+    if output == vault or output == Path(output.anchor) or output == Path.home().resolve():
+        raise SystemExit(f"Unsafe export destination: {output}")
+    marker = output / ".kw-okf-export.json"
+    concepts = {}
+    notes = []
+    assets = set()
+    for rel, path in iter_wiki_notes(vault):
+        fm, body = read_note(path)
+        if fm.get("type") != "LEAF_RULE":
+            continue
+        export_rel = rel[len("wiki/"):] if rel.startswith("wiki/") else rel
+        export_fm = export_concept_frontmatter(fm)
+        export_body = body.replace("](/wiki/", "](/")
+        concepts[export_rel] = export_fm
+        notes.append((export_rel, export_fm, export_body))
+        for image in fm.get("images", []) if isinstance(fm.get("images"), list) else []:
+            assets.add(normalize_rel(image))
+    plan = {"ok": True, "preview": bool(args.preview), "output": str(output), "concepts": len(notes), "assets": len(assets), "target_exists": output.exists(), "managed_export": marker.exists()}
+    if args.preview:
+        print(json.dumps(plan, ensure_ascii=False, indent=2))
+        return
+    if output.exists() and any(output.iterdir()) and not args.overwrite:
+        raise SystemExit("Export destination is not empty. Use --overwrite only after preview and explicit confirmation.")
+    if output.exists() and args.overwrite:
+        if not marker.exists():
+            raise SystemExit("Refusing to delete a non-empty directory that was not created by export-okf.")
+        shutil.rmtree(output)
+    output.mkdir(parents=True, exist_ok=True)
+    for export_rel, export_fm, body in notes:
+        atomic_write_text(output / export_rel, dump_frontmatter(export_fm) + body.strip() + "\n")
+    for asset_rel in assets:
+        source = resolve_in_vault(vault, asset_rel)
+        if source.exists() and source.is_file():
+            destination = output / asset_rel
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+    directories = {"."}
+    for path in concepts:
+        parent = PurePosixPath(path).parent
+        while str(parent) != ".":
+            directories.add(parent.as_posix())
+            parent = parent.parent
+    for directory_value in sorted(directories, key=lambda x: len(PurePosixPath(x).parts), reverse=True):
+        directory = PurePosixPath(directory_value)
+        index_path = output / ("index.md" if directory_value == "." else directory / "index.md")
+        atomic_write_text(index_path, render_export_index(directory, concepts, directories))
+    log_text = f"# Bundle Update Log\n\n## {today_slug()}\n\n- **Export**: Generated from a KW-OKF vault with {len(notes)} concepts.\n"
+    atomic_write_text(output / "log.md", log_text)
+    atomic_write_text(marker, json.dumps({"source_vault": str(vault), "generated_at": now_iso(), "concepts": len(notes)}, ensure_ascii=False, indent=2) + "\n")
+    plan["preview"] = False
+    plan["managed_export"] = True
+    print(json.dumps(plan, ensure_ascii=False, indent=2))
+
+
+def open_external(uri: str, cli_path: str | None) -> str | None:
+    errors = []
+    resolved_cli = None
+    if cli_path:
+        resolved_cli = str(Path(cli_path)) if Path(cli_path).exists() else shutil.which(cli_path)
+    if resolved_cli:
         try:
-            subprocess.Popen([cli_path, uri], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return
-        except Exception:
-            pass
+            subprocess.Popen([resolved_cli, uri], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return None
+        except Exception as exc:
+            errors.append(f"CLI opener failed: {exc}")
     if os.name == "nt":
         try:
             os.startfile(uri)  # type: ignore[attr-defined]
-        except Exception:
-            pass
+            return None
+        except Exception as exc:
+            errors.append(f"system opener failed: {exc}")
+    elif sys.platform == "darwin":
+        try:
+            subprocess.Popen(["open", uri], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return None
+        except Exception as exc:
+            errors.append(f"macOS opener failed: {exc}")
+    else:
+        opener = shutil.which("xdg-open")
+        if opener:
+            try:
+                subprocess.Popen([opener, uri], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return None
+            except Exception as exc:
+                errors.append(f"xdg-open failed: {exc}")
+    return "; ".join(errors) or "no external opener available"
 
 
 def command_obsidian_open(args):
     cfg, vault = load_config(), get_vault(args)
+    ensure_vault(vault)
     target = normalize_rel(args.target) if args.target else ""
-    vault_name = cfg.get("obsidian_vault_name") or vault.name
+    if target and not resolve_in_vault(vault, target).exists():
+        raise SystemExit(f"Obsidian target not found in Vault: {target}")
+    vault_name = obsidian_vault_name(cfg, vault)
     uri = f"obsidian://open?vault={quote(vault_name)}" + (f"&file={quote(target)}" if target else "")
-    open_external(uri, cfg.get("obsidian_cli_path"))
-    print(json.dumps({"ok": True, "uri": uri}, ensure_ascii=False, indent=2))
+    warning = open_external(uri, cfg.get("obsidian_cli_path"))
+    print(json.dumps({"ok": warning is None, "uri": uri, "warnings": [warning] if warning else []}, ensure_ascii=False, indent=2))
 
 
 def command_obsidian_search(args):
     cfg, vault = load_config(), get_vault(args)
-    vault_name = cfg.get("obsidian_vault_name") or vault.name
+    ensure_vault(vault)
+    vault_name = obsidian_vault_name(cfg, vault)
     uri = f"obsidian://search?vault={quote(vault_name)}&query={quote(args.query)}"
-    open_external(uri, cfg.get("obsidian_cli_path"))
-    print(json.dumps({"ok": True, "uri": uri}, ensure_ascii=False, indent=2))
+    warning = open_external(uri, cfg.get("obsidian_cli_path"))
+    print(json.dumps({"ok": warning is None, "uri": uri, "warnings": [warning] if warning else []}, ensure_ascii=False, indent=2))
 
 
 def build_parser():
@@ -849,7 +1409,8 @@ def build_parser():
     sp = sub.add_parser("search"); add_vault(sp); sp.add_argument("--query", required=True); sp.add_argument("--limit", type=int, default=10); sp.set_defaults(func=command_search)
     sp = sub.add_parser("stage"); add_vault(sp); sp.add_argument("--type", required=True, choices=["ROUTER", "LEAF_RULE"]); sp.add_argument("--parent-id", required=True); sp.add_argument("--parent-path", required=True); sp.add_argument("--knowledge-type", choices=sorted(VALID_KNOWLEDGE_TYPES)); sp.add_argument("--title", required=True); sp.add_argument("--summary", required=True); sp.add_argument("--body", default=""); sp.add_argument("--tags", default=""); sp.add_argument("--aliases", default=""); sp.add_argument("--scope", default=""); sp.add_argument("--confidence", default="medium", choices=sorted(VALID_CONFIDENCE)); sp.add_argument("--source-ref", action="append"); sp.add_argument("--image", action="append"); sp.add_argument("--link", action="append"); sp.add_argument("--review-after", default=""); sp.add_argument("--language", choices=["en-US", "zh-CN"]); sp.add_argument("--target", required=True); sp.set_defaults(func=command_stage)
     sp = sub.add_parser("commit"); add_vault(sp); sp.add_argument("--draft", required=True); sp.add_argument("--target", required=True); sp.add_argument("--overwrite", action="store_true"); sp.add_argument("--allow-create-dirs", action="store_true"); sp.add_argument("--allow-create-router", action="store_true"); sp.set_defaults(func=command_commit)
-    sp = sub.add_parser("process-img"); add_vault(sp); sp.add_argument("--src", required=True); sp.add_argument("--dest", required=True); sp.add_argument("--ratio"); sp.add_argument("--background"); sp.set_defaults(func=command_process_img)
+    sp = sub.add_parser("process-img"); add_vault(sp); sp.add_argument("--src", required=True); sp.add_argument("--dest", required=True); sp.add_argument("--ratio"); sp.add_argument("--background"); sp.add_argument("--force-ratio", action="store_true"); sp.add_argument("--preview", action="store_true"); sp.add_argument("--allow-create-dirs", action="store_true"); sp.add_argument("--overwrite", action="store_true"); sp.set_defaults(func=command_process_img)
+    sp = sub.add_parser("export-okf"); add_vault(sp); sp.add_argument("--out", required=True); sp.add_argument("--preview", action="store_true"); sp.add_argument("--overwrite", action="store_true"); sp.set_defaults(func=command_export_okf)
     sp = sub.add_parser("obsidian-open"); add_vault(sp); sp.add_argument("--target", default=""); sp.set_defaults(func=command_obsidian_open)
     sp = sub.add_parser("obsidian-search"); add_vault(sp); sp.add_argument("--query", required=True); sp.set_defaults(func=command_obsidian_search)
     return p

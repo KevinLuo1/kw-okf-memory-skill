@@ -1,6 +1,9 @@
 # KW-OKF Memory Skill
 
-Give Codex a structured Obsidian/Markdown memory wiki: Karpathy-style + OKF-inspired pages, safe structure evolution, index-and-graph retrieval, and staged AI writes.
+[![CI](https://github.com/KevinLuo1/kw-okf-memory-skill/actions/workflows/ci.yml/badge.svg)](https://github.com/KevinLuo1/kw-okf-memory-skill/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+Give Codex a structured Obsidian/Markdown memory wiki: Karpathy-style + an opinionated OKF-inspired KW-OKF profile, safe structure evolution, index-and-graph retrieval, staged AI writes, and optional OKF v0.1 export.
 
 KW-OKF Memory is for people who use Codex across many chats and do not want their project knowledge scattered across old conversations. It is especially useful for long-running projects and long-lived knowledge bases where decisions, rules, research notes, screenshots, procedures, and lessons need to survive, stay organized, and remain reusable.
 
@@ -10,7 +13,7 @@ Recommended setup: **Codex + KW-OKF Memory + Obsidian + a local Markdown vault**
 
 ### 1. A long-term knowledge base that stays structured
 
-This is not a random folder where AI drops Markdown files. The vault uses a Karpathy-style personal wiki plus a Google OKF-inspired schema: Router pages for categories, Leaf pages for concrete knowledge, frontmatter, `source_refs`, tags, assets, evolution logs, and a fixed vault skeleton.
+This is not a random folder where AI drops Markdown files. The vault uses a Karpathy-style personal wiki plus an opinionated Google OKF-inspired profile: Router pages for categories, Leaf pages for concrete knowledge, frontmatter, `source_refs`, tags, assets, evolution logs, and a fixed vault skeleton.
 
 The result: your knowledge base can keep growing without quickly becoming a pile of disconnected notes.
 
@@ -39,6 +42,12 @@ stage -> preview -> confirmation -> commit -> build/audit
 
 Codex can help capture and organize knowledge, but final `wiki/` pages are not written silently. You get a preview before durable memory changes land.
 
+### 5. Strict internally, interoperable when needed
+
+The internal Vault uses the stricter KW-OKF profile. It adds structural Router/Leaf types, path-derived ids, parent validation, confidence, source references, review dates, and staged writes. These are useful memory-system rules, but they mean the internal Vault does not claim direct OKF v0.1 conformance.
+
+When another tool needs a portable bundle, `export-okf` creates a derived handoff with business-semantic concept types and reserved frontmatter-free `index.md` files. Your internal KW-OKF Vault remains unchanged.
+
 ## How You Use It
 
 You do not need to think in scripts or schemas during normal use. Talk to Codex naturally.
@@ -65,9 +74,10 @@ A typical write looks like this:
 2. Codex checks existing memory for related notes and possible duplicates.
 3. Codex stages a draft in `inbox/staged/`.
 4. You review the preview.
-5. After confirmation, Codex commits it into `wiki/`.
-6. The Skill rebuilds `categories.json` and `graph.json`.
-7. You can review the committed note in Obsidian.
+5. If assets are involved, Codex runs the previewed image operation with the confirmed directory/overwrite flags.
+6. After confirmation, Codex commits the note into `wiki/`.
+7. The Skill rebuilds `categories.json` and `graph.json`, then audits the changed pages.
+8. You can review the committed note in Obsidian.
 
 ## What Problems It Solves
 
@@ -176,6 +186,12 @@ The key rule is simple: Codex can help write memory, but formal knowledge does n
 
 ## Install In Codex
 
+Requirements:
+
+- Python 3.10 or newer.
+- Pillow for `process-img`: `python -m pip install Pillow`.
+- Obsidian is recommended but optional.
+
 Ask Codex to install the Skill from this repository:
 
 ```text
@@ -224,6 +240,22 @@ Search existing knowledge:
 python scripts/okf_glue.py search --vault ~/KnowledgeBase --query "pricing decision"
 ```
 
+Preview and archive an image safely:
+
+```bash
+python scripts/okf_glue.py process-img --vault ~/KnowledgeBase --src ./source.png --dest assets/references/source.png --preview
+python scripts/okf_glue.py process-img --vault ~/KnowledgeBase --src ./source.png --dest assets/references/source.png
+```
+
+If the preview lists new asset directories or an existing target, add `--allow-create-dirs` or `--overwrite` only after confirmation.
+
+Preview and export an interoperable OKF-style handoff bundle:
+
+```bash
+python scripts/okf_glue.py export-okf --vault ~/KnowledgeBase --out ./knowledge-export --preview
+python scripts/okf_glue.py export-okf --vault ~/KnowledgeBase --out ./knowledge-export
+```
+
 In normal use, you can talk to Codex naturally:
 
 ```text
@@ -259,6 +291,8 @@ skills/kw-okf-memory/SKILL.md      # entry instructions loaded by Codex
 skills/kw-okf-memory/config.json   # default public configuration
 skills/kw-okf-memory/references/   # workflow and schema references
 skills/kw-okf-memory/scripts/      # deterministic glue tooling
+tests/                             # regression tests for write, audit, asset, and export boundaries
+.github/workflows/ci.yml           # Python 3.10/3.13 continuous integration
 ```
 
 Do not store personal vault content inside this repository. The Skill defines protocol and tools; your vault stores the knowledge.
@@ -271,11 +305,24 @@ KW-OKF Memory is conservative by design:
 - It does not treat Obsidian as the write authority.
 - It does not make generated JSON the source of truth.
 - It does not silently create new top-level framework folders.
+- It does not silently create nested asset folders or overwrite assets.
 - It does not require a background daemon.
 - It keeps formal wiki writes behind preview and confirmation.
+- It binds every staged draft to its previewed target and rolls back recoverable commit failures.
 
 ## Notes
 
-This is an independent project inspired by Karpathy-style personal wiki workflows and Google OKF-inspired schemas. It is not an official Google product or an official OKF compliance claim.
+This is an independent project inspired by [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) and Google Cloud's [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md). KW-OKF is an opinionated producer profile, not an official Google product and not a claim that the internal Vault directly conforms to OKF v0.1. Use `export-okf` for an interoperability-oriented handoff.
 
 This is an early public release for Codex users who want transparent, Obsidian-friendly, Markdown-based long-term memory. Feedback, issues, and improvements are welcome.
+
+## Development
+
+```bash
+python -m pip install -r requirements.txt
+python -m unittest discover -s tests -v
+```
+
+## License
+
+MIT. See [LICENSE](LICENSE).

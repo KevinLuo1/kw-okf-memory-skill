@@ -16,11 +16,11 @@ Normal writes do not enter the full maintenance workflow. They only run lightwei
 | --- | --- | --- |
 | `init` | Create the fixed Vault skeleton and minimal system files | Use only for a new Vault or missing skeleton; it is not a routine maintenance command. |
 | `build` | Rebuild `index.md`, `categories.json`, and `graph.json` from `wiki/` | Run at the start of maintenance so indexes reflect current Markdown; run again after committed fixes. |
-| `audit` | Check schema, path shape, parent consistency, field types, images, source refs, links, duplicate ids, expired reviews, and private WikiLinks | Main maintenance entry point; by default it only reports issues, and updates `error_book.yaml` only when `--write-error-book` is explicitly used. |
-| `search` | Query title, summary, aliases, tags, type, and scope in `categories.json`; if the index is missing, run `build` first | Use to locate likely duplicates, nearby topics, and similar rules; do not treat it as the final answer by itself. |
+| `audit` | Check schema, path-derived ids, path shape, parent consistency, field types, timestamps, images, source refs, frontmatter/body links, body structure, duplicate ids, expired reviews, and private WikiLinks | Main maintenance entry point; by default it only reports issues, and updates `error_book.yaml` only when `--write-error-book` is explicitly used. |
+| `search` | Query path, id, parent path, title, summary, aliases, tags, type, and scope in `categories.json`; automatically rebuild a missing or older index | Use `matched_fields` to locate likely duplicates, nearby topics, and similar rules; do not treat it as the final answer by itself. |
 | `stage` | Create a draft under `inbox/staged/` and show planned directory or Router creation | Use when a maintenance suggestion needs an actual page change; it creates drafts only. |
 | `commit` | After user confirmation, write a staged draft to formal `wiki/`, archive the draft, rebuild indexes, and append logs | Use only after per-item user confirmation or scoped batch confirmation. |
-| `process-img` | Archive image assets under `assets/` | Use when maintaining image references, product images, screenshots, or reference images. |
+| `process-img` | Preview and archive image assets under `assets/` with explicit directory/overwrite gates | Use when maintaining image references, product images, screenshots, or reference images. |
 | `obsidian-open` | Open a target Vault page | Use for human review only; Obsidian is not the write authority. |
 | `obsidian-search` | Open a search in Obsidian | Use for human context and backlink review; it does not replace `build` / `audit`. |
 

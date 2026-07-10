@@ -10,23 +10,7 @@
                                 "zh-CN"
                             ],
     "language_mode":  "follow-user-language",
-    "schema_language":  "en-US",
     "obsidian_cli_path":  "",
     "obsidian_vault_name":  "KnowledgeBase",
-    "obsidian_vault_id":  "",
-    "obsidian_auto_open_after_commit":  false,
-    "require_folder_create_confirmation":  true,
-    "allowed_top_level_dirs":  [
-                                   "inbox",
-                                   "assets",
-                                   "wiki"
-                               ],
-    "allowed_root_files":  [
-                               "index.md",
-                               "log.md",
-                               "categories.json",
-                               "graph.json",
-                               "error_book.yaml",
-                               "tags.md"
-                           ]
+    "obsidian_auto_open_after_commit":  false
 }
