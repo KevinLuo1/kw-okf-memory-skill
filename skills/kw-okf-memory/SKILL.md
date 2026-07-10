@@ -1,13 +1,13 @@
 ---
 name: kw-okf-memory
-description: Prevent messy AI-written knowledge bases and Codex context loss across chats by turning conversations, decisions, rules, procedures, research notes, screenshots, and assets into an audited Obsidian-friendly local Markdown memory wiki inspired by Karpathy-style personal wikis and Google OKF-style schemas. Use when Codex should save, update, retrieve, synthesize, search, stage, commit, audit, or maintain durable local memory; check duplicates, conflicts, stale notes, broken links, associations, and vault structure; or open committed notes in Obsidian for human review.
+description: Build and maintain a structured Obsidian-friendly Markdown memory wiki for Codex using a Karpathy-style wiki, Google OKF-inspired schema, rebuildable categories.json and graph.json indexes, safe structure evolution, and staged AI writes. Use when Codex should save, update, retrieve, synthesize, search, stage, commit, audit, or maintain durable project memory; prevent messy AI-written knowledge bases; check duplicates, conflicts, stale notes, broken links, associations, and vault structure; or open committed notes in Obsidian for human review.
 ---
 
 # KW-OKF Memory
 
 ## Core Boundary
 
-Use this skill to prevent messy AI-written knowledge bases and Codex cross-chat context loss by turning conversation experience, rules, cases, images, and operating procedures into an audited local OKF Markdown Vault organized as a Karpathy-style personal wiki. Recommend Obsidian for human review, search, backlinks, and navigation after commit, but keep Markdown and the glue script as the write/audit authority.
+Use this skill to maintain a long-term Codex memory wiki that stays structured, can evolve safely, supports index-and-graph retrieval, and prevents silent AI writes. Recommend Obsidian for human review, search, backlinks, and navigation after commit, but keep Markdown and the glue script as the write/audit authority.
 
 Keep the boundary clear: the Skill stores tools and protocol, the Vault stores long-term knowledge assets, the Python glue layer performs deterministic filesystem/index/audit work, and Codex extracts, judges, previews, and asks for confirmation.
 

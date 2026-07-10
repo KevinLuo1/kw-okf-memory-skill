@@ -1,7 +1,7 @@
 interface:
   display_name: "KW-OKF Memory"
-  short_description: "Keep AI-written Codex memory organized across chats"
-  default_prompt: "Use $kw-okf-memory to save, search, or think with durable project memory."
+  short_description: "Structured, indexed, safe Codex memory wiki"
+  default_prompt: "Use $kw-okf-memory to save, search, or maintain durable project memory."
 
 policy:
   allow_implicit_invocation: true
