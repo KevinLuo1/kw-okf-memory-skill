@@ -1,6 +1,6 @@
 ---
 name: kw-okf-memory
-description: Manage a local KW-OKF long-term memory vault for Codex using Markdown, YAML-compatible frontmatter, JSON indexes, audited stage/preview/commit workflow, Obsidian review, lightweight association search, and asset archival. Use for long-term memory tasks such as preserving or updating knowledge, retrieving or synthesizing prior records, creating or updating OKF notes, processing memory assets, auditing or maintaining the vault, organizing associations, or checking duplicates, conflicts, stale notes, and knowledge-base health.
+description: Turn Codex chats, decisions, rules, procedures, assets, research notes, and project lessons into an audited local Markdown/OKF long-term memory vault. Use when Codex should save or update durable knowledge, retrieve or synthesize prior memory, search before answering, stage and commit OKF notes, process memory assets, audit vault health, organize associations, or check duplicates, conflicts, stale notes, broken links, and knowledge-base structure.
 ---
 
 # KW-OKF Memory
