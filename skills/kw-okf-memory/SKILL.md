@@ -1,13 +1,13 @@
 ---
 name: kw-okf-memory
-description: Turn Codex chats, decisions, rules, procedures, assets, research notes, and project lessons into an audited local Markdown/OKF long-term memory vault. Use when Codex should save or update durable knowledge, retrieve or synthesize prior memory, search before answering, stage and commit OKF notes, process memory assets, audit vault health, organize associations, or check duplicates, conflicts, stale notes, broken links, and knowledge-base structure.
+description: Turn Codex chats, decisions, rules, procedures, assets, research notes, and project lessons into a Karpathy-style personal wiki backed by a Google OKF-inspired local Markdown memory vault. Use when Codex should save or update durable knowledge, retrieve or synthesize prior memory, search before answering, stage and commit OKF notes, process memory assets, audit vault health, organize associations, or check duplicates, conflicts, stale notes, broken links, and knowledge-base structure.
 ---
 
 # KW-OKF Memory
 
 ## Core Boundary
 
-Use this skill to turn Codex conversation experience, rules, cases, images, and operating procedures into an audited local OKF/Obsidian Vault.
+Use this skill to turn Codex conversation experience, rules, cases, images, and operating procedures into an audited local OKF/Obsidian Vault organized as a Karpathy-style personal wiki.
 
 Keep the boundary clear: the Skill stores tools and protocol, the Vault stores long-term knowledge assets, the Python glue layer performs deterministic filesystem/index/audit work, and Codex extracts, judges, previews, and asks for confirmation.
 

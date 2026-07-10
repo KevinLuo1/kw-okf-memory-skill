@@ -1,10 +1,10 @@
 # KW-OKF Memory Skill
 
-Turn Codex conversations into a durable local memory system.
+Turn Codex conversations into a Karpathy-style personal wiki with a Google OKF-inspired local memory vault.
 
-KW-OKF Memory is a Codex Skill for people who want Codex to remember project decisions, operating rules, research notes, assets, and hard-won lessons across chats without dumping everything into a messy folder. It gives Codex a disciplined way to capture useful knowledge, preview it, commit it into a local Markdown vault, rebuild indexes, and retrieve it later for search or deeper reasoning.
+KW-OKF Memory is a Codex Skill for people who want Codex to remember project decisions, operating rules, research notes, assets, and hard-won lessons across chats without dumping everything into a messy folder. It combines a Karpathy-style personal wiki mindset with a Google OKF-inspired Markdown schema: small linkable knowledge pages, typed frontmatter, parent routing, source references, audit logs, rebuildable indexes, and optional Obsidian review.
 
-Instead of treating memory as hidden model state, this Skill keeps memory transparent: plain Markdown files, structured frontmatter, relative links, audit logs, rebuildable JSON indexes, and optional Obsidian review.
+Instead of treating memory as hidden model state, this Skill keeps memory transparent and inspectable. Codex can search it, think with it, stage changes to it, and maintain it over time.
 
 ## The Problem It Solves
 
@@ -16,14 +16,14 @@ Codex can help in the moment, but long-running work has a memory problem:
 - Knowledge bases become messy when AI writes directly into them without review.
 - Search alone is not enough when you need Codex to compare, synthesize, or detect conflicts.
 
-KW-OKF Memory gives Codex a workflow for turning those scattered fragments into an organized local knowledge vault.
+KW-OKF Memory gives Codex a workflow for turning those scattered fragments into an organized local wiki that can still be read, edited, and audited by humans.
 
 ## What It Does
 
 Use this Skill when you want Codex to:
 
 - Save a conversation lesson, decision, rule, SOP, case, entity note, or source note.
-- Create or update a structured OKF-style Markdown page.
+- Create or update a structured OKF-style Markdown page inside a personal wiki.
 - Stage a draft first, show a preview, and only commit after confirmation.
 - Build `categories.json` for fast lookup and `graph.json` for parent/link relationships.
 - Search existing memory before answering or writing new notes.
@@ -36,6 +36,8 @@ Use this Skill when you want Codex to:
 
 KW-OKF Memory is intentionally boring in the best way:
 
+- **Karpathy-style wiki**: durable knowledge becomes small, readable, linkable pages.
+- **Google OKF-inspired schema**: pages use typed frontmatter, parent routing, timestamps, sources, links, and evolution logs.
 - **Local-first**: your memory lives in your filesystem.
 - **Human-readable**: Markdown pages and assets are the source of truth.
 - **Audited**: formal writes go through staging, preview, confirmation, commit, build, and audit.
@@ -43,6 +45,8 @@ KW-OKF Memory is intentionally boring in the best way:
 - **Not a black box**: generated JSON can be rebuilt from Markdown at any time.
 - **Obsidian-compatible**: review and navigate the vault with normal Markdown tooling.
 - **Bilingual-ready**: defaults to `en-US`, with `zh-CN` supported for Chinese workflows.
+
+This is an independent project inspired by the wiki and OKF ideas above. It is not an official Google product or an official OKF compliance claim.
 
 ## Core Workflow
 

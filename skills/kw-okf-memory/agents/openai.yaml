@@ -1,6 +1,6 @@
 interface:
   display_name: "KW-OKF Memory"
-  short_description: "Turn Codex work into an audited local memory vault"
+  short_description: "Karpathy-style OKF memory wiki for Codex"
   default_prompt: "Use $kw-okf-memory to save or retrieve durable project memory."
 
 policy:
