@@ -84,7 +84,7 @@ Before answering, search my memory for related decisions and stale rules.
 
 Useful when the answer depends on previous constraints, user preferences, past mistakes, or project-specific context.
 
-### 6. Clean up the knowledge base
+### 6. Keep the knowledge base organized
 
 When the vault starts growing, ask Codex to inspect it:
 
